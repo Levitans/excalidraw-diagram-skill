@@ -31,7 +31,7 @@ Just tell your agent: *"Set up the Excalidraw diagram skill renderer by followin
 **Option B: Manual**
 
 ```bash
-cd .claude/skills/excalidraw-diagram/references
+cd excalidraw-diagram/scripts
 uv sync
 uv run playwright install chromium
 ```
@@ -57,6 +57,7 @@ excalidraw-diagram/
     color-palette.md                # Brand colors (edit this to customize)
     element-templates.md            # JSON templates for each element type
     json-schema.md                  # Excalidraw JSON format reference
+  scripts/
     render_excalidraw.py            # Render .excalidraw to PNG
     render_template.html            # Browser template for rendering
     pyproject.toml                  # Python dependencies (playwright)
