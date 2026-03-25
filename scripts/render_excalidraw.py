@@ -1,11 +1,11 @@
 """Render Excalidraw JSON to PNG using Playwright + headless Chromium.
 
 Usage:
-    cd excalidraw-diagram/scripts
+    cd ./scripts
     uv run python render_excalidraw.py <path-to-file.excalidraw> [--output path.png] [--scale 2] [--width 1920]
 
 First-time setup:
-    cd excalidraw-diagram/scripts
+    cd ./scripts
     uv sync
     uv run playwright install chromium
 """
@@ -16,6 +16,55 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+
+def parse_hex_color(hex_color: str) -> tuple[int, int, int] | None:
+    """Parse a hex color string to RGB tuple. Returns None for transparent."""
+    if hex_color == "transparent":
+        return None
+    hex_color = hex_color.lstrip("#")
+    if len(hex_color) == 3:
+        hex_color = "".join(c * 2 for c in hex_color)
+    if len(hex_color) != 6:
+        return None
+    try:
+        return (
+            int(hex_color[0:2], 16),
+            int(hex_color[2:4], 16),
+            int(hex_color[4:6], 16),
+        )
+    except ValueError:
+        return None
+
+
+def get_relative_luminance(rgb: tuple[int, int, int]) -> float:
+    """Calculate relative luminance per WCAG 2.1."""
+    r, g, b = [x / 255.0 for x in rgb]
+    r = r / 12.92 if r <= 0.03928 else ((r + 0.055) / 1.055) ** 2.4
+    g = g / 12.92 if g <= 0.03928 else ((g + 0.055) / 1.055) ** 2.4
+    b = b / 12.92 if b <= 0.03928 else ((b + 0.055) / 1.055) ** 2.4
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def calculate_contrast_ratio(color1: str, color2: str) -> float:
+    """Calculate WCAG contrast ratio between two colors.
+
+    Returns a value between 1.0 (identical) and 21.0 (maximum contrast).
+    WCAG AA requires 4.5:1 for normal text.
+    """
+    rgb1 = parse_hex_color(color1)
+    rgb2 = parse_hex_color(color2)
+
+    if rgb1 is None or rgb2 is None:
+        return 21.0
+
+    lum1 = get_relative_luminance(rgb1)
+    lum2 = get_relative_luminance(rgb2)
+
+    lighter = max(lum1, lum2)
+    darker = min(lum1, lum2)
+
+    return (lighter + 0.05) / (darker + 0.05)
 
 
 def validate_excalidraw(data: dict) -> list[str]:
@@ -31,6 +80,34 @@ def validate_excalidraw(data: dict) -> list[str]:
         errors.append("'elements' must be an array")
     elif len(data["elements"]) == 0:
         errors.append("'elements' array is empty — nothing to render")
+
+    # Validate text color contrast against container backgrounds
+    elements = data.get("elements", [])
+    if isinstance(elements, list):
+        element_map = {el.get("id"): el for el in elements if isinstance(el, dict)}
+
+        for el in elements:
+            if not isinstance(el, dict):
+                continue
+            if el.get("type") == "text" and el.get("containerId"):
+                container_id = el.get("containerId")
+                container = element_map.get(container_id)
+                if container:
+                    text_color = el.get("strokeColor", "#000000")
+                    bg_color = container.get("backgroundColor", "transparent")
+                    contrast = calculate_contrast_ratio(text_color, bg_color)
+                    if contrast < 2.0:
+                        errors.append(
+                            f"Text element '{el.get('id')}' has insufficient color contrast "
+                            f"({contrast:.2f}:1) against its container background. "
+                            f"Text color: {text_color}, Background: {bg_color}"
+                        )
+                    elif contrast < 4.5:
+                        errors.append(
+                            f"Text element '{el.get('id')}' has poor color contrast "
+                            f"({contrast:.2f}:1) against its container background. "
+                            f"Text color: {text_color}, Background: {bg_color}"
+                        )
 
     return errors
 
@@ -81,7 +158,7 @@ def render(
         from playwright.sync_api import sync_playwright
     except ImportError:
         print("ERROR: playwright not installed.", file=sys.stderr)
-        print("Run: cd excalidraw-diagram/scripts && uv sync && uv run playwright install chromium", file=sys.stderr)
+        print("Run: cd ./scripts && uv sync && uv run playwright install chromium", file=sys.stderr)
         sys.exit(1)
 
     # Read and validate
@@ -128,7 +205,7 @@ def render(
         except Exception as e:
             if "Executable doesn't exist" in str(e) or "browserType.launch" in str(e):
                 print("ERROR: Chromium not installed for Playwright.", file=sys.stderr)
-                print("Run: cd excalidraw-diagram/scripts && uv run playwright install chromium", file=sys.stderr)
+                print("Run: cd ./scripts && uv run playwright install chromium", file=sys.stderr)
                 sys.exit(1)
             raise
 
